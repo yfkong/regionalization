@@ -21,26 +21,14 @@ weight_features=[] #for homoDP only
 num_units=-1
 nodedij=[]
 nodedik=[]	#weighted cost from i to k, =nodedij*nodes[][3] 
-nodendij=[] #network distance
 node_neighbors=[]
-facility_neighbors=[]
-total_pop=0
-avg_pop=0
-total_supply=0
-distance_type=0 #0 Euclidean, 1 Manhattan, 2 Geo 3 Network
-all_units_as_candadate_locations=0
+total_pop=0.0
 facilityCandidate=[] #attribute = 0,1,2...
 facilityCapacity=[]
 facilityCost=[]
-num_facilityCandidate=-1
 num_districts=-1 # number of service areas/facilities
-avg_dis_min=1.0
-potential_facilities=[]
 NearFacilityList=[]
 nearCustomer=[]
-nearCustomers=[]
-geo_instance=1
-pmp_I_eaquls_J=1
 attributes=[]
 
 #parameters for districting
@@ -166,7 +154,7 @@ def on_key_event(e):
 	#print e.name    
 	if e.name=="esc":
 		stop_searching=1    
-		print "user break...!"
+		print "user break...!",
 keyboard.on_press_key('esc', on_key_event)
         
 def arcpy_print(s):
@@ -221,7 +209,6 @@ def check_current_solution_continuality_feasibility():
 def check_continuality_feasibility(sol,rid):
 	global time_check
 	global check_count
-	#if geo_instance==0: return -1
 	u=facilityCandidate[rid]
 	check_count+=1
 	t=time.time()
@@ -253,7 +240,7 @@ def find_edge_units():
 		return find_tail_units()
 	ulist=[]
 	for x in range(num_units):
-		if geo_instance==1 and spatial_contiguity==1 and x in centersID:
+		if spatial_contiguity==1 and x in centersID:
 			continue  #bug for benckmark instances
 		k=node_groups[x]
 		for y in node_neighbors[x]:
@@ -319,13 +306,10 @@ def update_district_info():
 	global obj_balance
 	global centersID
 	global objective_supply
-	global avg_dis_min
 	for k in range(num_districts):
 		district_info[k][0] = 0
 		district_info[k][1] = 0.0
 		district_info[k][2] = 0.0
-		district_info[k][3] = 0.0
-		district_info[k][4] = 0.0
 	for k in range(num_districts):
 		if centersID[k]<0 and k in node_groups:
 			arcpy_print("debug: a facility not selected but used: " + str(k))
@@ -339,32 +323,8 @@ def update_district_info():
 		district_info[k][0] = len(ulist)
 		district_info[k][1] = sum(nodes[x][3] for x in ulist)
 		district_info[k][2] = sum(nodedik[x][k] for x in ulist)
-		if location_problem==9: district_info[k][2] = sum(nodedij[x][k] for x in ulist)
-		district_info[k][3] = facilityCapacity[k] 
-		district_info[k][4] = max(0.0,district_info[k][1]-facilityCapacity[k]) # -district_info[k][3]
-		if location_problem==3: district_info[k][4]=0 #pmp
-		if location_problem==2: #pdp,edp
-			bal=0.0
-			dev=pop_deviation*total_pop/max_num_facility
-			if district_info[k][1]>district_info[k][3]+dev: bal=district_info[k][1]-district_info[k][3]-dev
-			if district_info[k][1]<district_info[k][3]-dev: bal=district_info[k][3]-district_info[k][1]-dev
-			district_info[k][4]=bal
-		#print centersID,node_groups
-	bal=sum(x[4] for x in district_info)
 	objective=sum([x[2] for x in district_info])
-	objective_overload=bal
-	#if objective/total_pop<avg_dis_min:
-	#	 avg_dis_min=objective/total_pop
-	avg_dis_min=objective/total_pop
-	biobjective=objective+objective_overload*avg_dis_min*pop_dis_coeff
-
-	objective_supply=sum(facilityCapacity[x] for x in range(num_districts) if centersID[x] >=0)
-	#biobjective=objective+objective_overload*avg_dis_min*1000000
-	#biobjective=bal2*avg_dis_min*1000000
-	if fixed_cost_obj==1:
-		fcost=sum(facilityCost[x] for x in range(num_districts) if centersID[x] >=0)
-		objective_fcost=fcost
-		biobjective+=fcost
+	biobjective=objective
 	move_count+=1
 
 def find_frag_unit():
@@ -378,7 +338,7 @@ def find_frag_unit():
 			ulist=[x for x in range(num_units) if node_groups[x]==k]
 			nflist=frag_unit_minority(ulist,k)
 			frag_units+=nflist
-	if spatial_contiguity!=2:
+	if spatial_contiguity==1:
 		for k in range(num_districts):
 			if centersID[k]==-1: continue
 			ulist2=[centersID[k]]
@@ -406,7 +366,7 @@ def frag_unit_minority(ulist,k):
 	else:
 		ulist2=[ulist1[-1]]
 		ulist.pop()
-	total_area=sum(x[3] for x in nodes)
+	#total_area=sum(x[3] for x in nodes)
 	while 1:
 		for x in ulist2:
 			for i in range(len(ulist1)):
@@ -427,11 +387,11 @@ def frag_unit_minority(ulist,k):
 	final_list.sort(key=lambda x:x[0])
 	#del final_list[-1]
 	flist=[]
-	n=total_area*spatial_contiguity_minimum_percentage/max_num_facility/100
+	n=total_pop*spatial_contiguity_minimum_percentage/max_num_facility/100
 	for x in final_list: 
 		area=sum(nodes[i][3] for i in x[1])
-		if area>n:continue
-		if k in x[1]: continue        
+		if area>=n:continue
+		#if k in x[1]: continue        
 		flist+=x[1]
 	#print [len(flist),len(ulist)],
 	return flist
@@ -448,18 +408,20 @@ def district_with_multiparts(ulist):
 					ulist2.append(ulist1[i])
 					ulist1[i]=-1
 			ulist1=[x for x in ulist1 if x>=0]
-		final_list.append([len(ulist2),ulist2[:]])
+		final_list.append([len(ulist2),sum(nodes[x][3] for x in ulist2),ulist2[:]])
 		if len(ulist1)<=1:
-		   if len(ulist1)==1:
-				final_list.append([1,ulist1[:]])
-		   break
+			if len(ulist1)==1:
+				i=ulist1[0]	
+				final_list.append([1,nodes[i][3],ulist1[:]])
+			break
 		u=ulist1[0]
 		ulist2=[u]
 		del ulist1[0]
 	final_list.sort(key=lambda x:-x[0])
 	#del final_list[-1]
 	flist=[x[0] for x in final_list]
-	return flist
+	flist2=[x[1] for x in final_list]
+	return [flist,flist2]
 
 def repair_fragmented_solution_large_instance():
 	global node_groups
@@ -468,10 +430,11 @@ def repair_fragmented_solution_large_instance():
 	if spatial_contiguity==0: return
 	t=time.time()
 	frag_units=find_frag_unit()
-	#print "frag_units",len(frag_units),
 	if len(frag_units)==0: return
-	#sol=node_groups[:]
+	random.shuffle(frag_units)
 	for x in frag_units:
+		if centersID[x]>=0: 
+			continue
 		node_groups[x]=-1
 	update_district_info()
 	#update_centers()
@@ -489,37 +452,22 @@ def repair_fragmented_solution_large_instance():
 					break                    
 		frag_units=[x for x in frag_units if x>=0]
 		if len(frag_units)==0: break
-		if assigned==0: break    
-    
-	'''while len(frag_units)>0:
-		cands=[]
-		for x in frag_units:
-			for y in node_neighbors[x]:
-				k=node_groups[y]
-				if k<0: continue
-				cands.append([x,k,nodedik[x][k]])
-		if cands==[]: break
-		cands.sort(key=lambda x:x[2])
-		n=len(cands)/10
-		if n<1: n=1
-		for x in cands[:n]:
-			nid=x[0]
-			if node_groups[nid]>=0: continue
-			node_groups[nid]=x[1]
-			if nid in frag_units: frag_units.remove(x[0])'''
+		i=frag_units[-1]
+		frag_units.pop()
+		for k in NearFacilityList[i]:
+			if centersID[k]>=0:
+				 node_groups[i]=k
+				 break
+        
+	'''	if assigned==0: break
+	print "frag_units:",len(frag_units),
 	for x in frag_units:
-		#print len(frag_units)
 		for k in NearFacilityList[x]:
 			if centersID[k]>=0:
 				 node_groups[x]=k
-				 break
-	#print len(frag_units)
-	#print int(objective),
+				 break'''
 	update_district_info()
-	#print int(objective),
-	#repair_fragmented_solution()
 	time_repair+=time.time()-t
-	#print objective,
 
 #repair the fragmented solution
 def repair_fragmented_solution():
@@ -531,24 +479,16 @@ def repair_fragmented_solution():
 	global centersID
 	global time_repair
 	t=time.time()     
-	for k in range(num_districts):
+	'''for k in range(num_districts):
 		if centersID[k]<0: continue
 		u=nearCustomer[k]
 		node_groups[u]=k
-	update_district_info()
+	update_district_info()'''
 	frag_units=find_frag_unit()
 	if len(frag_units)==0: return
 	sol=node_groups[:]
 	for x in frag_units:
 		node_groups[x]=-1
-	# if location_problem>=3:
-		# for k in range(num_districts):
-			# if centersID[k]<0: continue
-			# if node_groups[k]>=0: continue
-			# c,ulist=update_center(k)
-			# centersID[k]=-1
-			# centersID[c]=c
-			# for x in ulist: node_groups[x]=c
 	update_district_info()
 	#print len(frag_units),
 	while len(frag_units)>0:
@@ -559,9 +499,7 @@ def repair_fragmented_solution():
 			for y in node_neighbors[x]:
 				k=node_groups[y]
 				if k>=0:
-					gap=max(district_info[k][1]+ nodes[x][3] - facilityCapacity[k],0)
-					if location_problem==3: gap=0
-					cost2=gap*avg_dis_min*pop_dis_coeff + nodedik[x][k]
+					cost2=nodedik[x][k]
 					if cost2<cost:
 						nid=x
 						newk=k
@@ -570,61 +508,34 @@ def repair_fragmented_solution():
 			node_groups[nid]=newk
 			update_district_info()
 			frag_units.remove(nid)
-		else:
+			continue            
+		if len(frag_units)==0:
 			break
-	#print "frag_units", frag_units
+		i= frag_units[-1]
+		frag_units.pop()
+		node_groups[i]=sol[i]
+	'''if len(frag_units)>0:
+		print "frag_units", frag_units[-1]
+        
 	for x in frag_units:
-		node_groups[x]=sol[x]
-	#print len(frag_units)
-	#print int(objective),
+		node_groups[x]=sol[x]'''
 	update_district_info()
-	#print check_current_solution_continuality_feasibility()
-	#print int(objective),
 	time_repair+=time.time()-t    
 
 #update the best and the global best solution
 #if the current solution is better than the best
 def update_best_solution():
-	global best_solution
-	global best_centersID
-	global best_biobjective
-	global best_objective
-	global best_objective_fcost
-	global best_overload
-	global best_objective_overload
 	global best_centersID_global
 	global best_solution_global
 	global best_biobjective_global
-	global best_objective_global
-	global best_objective_fcost_global
-	global best_overload_global	   
-	global improved_loop
-	global improved
-	global avg_dis_min
-	improve =0
-	if location_problem==1 and adaptive_number_of_facilities==0:
-		nf=sum(1 for x in centersID if x>=0)
-		if nf!=max_num_facility: return 0
 	biobj=biobjective
 	biobj_best=best_biobjective
-	if biobj<=biobj_best:
-		best_biobjective=biobj
-		best_objective = objective
-		best_objective_fcost=objective_fcost
-		best_objective_overload = objective_overload
-		best_solution = node_groups[:]
-		best_centersID=centersID[:]
-		improved_loop=mainloop
-		improve =1
-		improved+=1
+	improve=0    
 	if biobj<best_biobjective_global:
 		best_biobjective_global=biobj
 		best_centersID_global=centersID[:]
-		best_overload_global = objective_overload
 		best_solution_global =node_groups[:]
-		best_objective_global = objective
-		best_objective_fcost_global=objective_fcost
-		avg_dis_min=biobj/total_pop
+		improve=1
 	return improve
 
 def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
@@ -637,15 +548,11 @@ def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
 	global facilityCandidate
 	global facilityCapacity
 	global facilityCost
-	global num_facilityCandidate
 	global num_districts
 	global district_info
-	global potential_facilities
-	global geo_instance
 	global total_pop
 	global weight_features
 	global attributes
-	geo_instance=1
 	f = open(f1)
 	line = f.readline()
 	line=line[:-1]
@@ -671,9 +578,9 @@ def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
 		weight_features[i]=float(items[num_first_feature+i])
 	#print weight_features[:10],"..."
 	line = f.readline()
+	line=line[:-1]
 	items=line.split("\t")
-	#line=line[:-1]
-	attributes=items[num_first_feature:num_first_feature+num_features]
+	attributes=items[num_first_feature:]
 	idx=0
 	for i in range(num_units):
 		if i%100==0: print ".",
@@ -684,11 +591,9 @@ def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
 		#items[:num_first_feature]
 		for j in range(len(items)):
 			if items[j]=="": items[j]="0"
-		if data_standardlize<=1:
-			attr=[float( items[x+num_first_feature] ) for x in range(num_features)]
-		else:
-			attr=[items[x+num_first_feature] for x in range(num_features)]
-		nodes.append(node+attr)
+		attr=[float( items[x+num_first_feature] ) for x in range(num_features)]
+		attr2=items[num_first_feature+num_features:] 
+		nodes.append(node+attr+attr2)
 	f.close()
 	num_districts=num_units
 	total_pop=sum(x[3] for x in nodes)
@@ -740,10 +645,12 @@ def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
 		print
 		print "total outlier values (>3, <-3):",n
 
-	print "calculating the matrix ..."
+	print "calculating the matrix ()..."
+	print "!!!!! Press Esc key to stop searching !!!!!"
 	for i in range(num_units):
 		#nodedik[i][i]=0.0
 		for j in range(i,num_units):
+			if stop_searching==1: exit()
 			if j<=i: continue
 			d=0.0
 			if data_standardlize==2:
@@ -802,25 +709,13 @@ def read_pmp_climate_instance(f1,f2,num_feat,num_first): #climate data
 				node_neighbors[idx1].append(idx2)
 		line = f.readline()
 	f.close()
-	potential_facilities=[x for x in range(num_districts)]
 	print "data prepaird!!"
 	return
 
 def find_near_customer():
 	global nearCustomer
-	global nearCustomers
-	if location_problem>=2 and pmp_I_eaquls_J==1: 
-		nearCustomers=NearFacilityList
-		nearCustomer=[x for x in range(num_districts)]
-		return
-	nearCustomer=[-1 for x in range(num_districts)]
-	nearCustomers=[[] for x in range(num_districts)]
-	dis=[]
-	for k in range(num_districts):
-		dis=[ [x,nodedij[x][k]] for x in range(num_units)]
-		dis.sort(key=lambda x: x[1])
-		nearCustomer[k]=dis[0][0]
-		nearCustomers[k]=[x[0] for x in dis]
+	nearCustomer=[x for x in range(num_districts)]
+
 
 def find_NearFacilityList(nnn):
 	global NearFacilityList
@@ -829,8 +724,10 @@ def find_NearFacilityList(nnn):
 	n=nnn#num_districts
 	if n>num_districts: n=num_districts
 	dis=0.0
-	print "find_NearFacilityList()",
+	print "find_NearFacilityList()..."
+	print "!!!!! Press Esc key to stop searching !!!!!"
 	for i in range(num_units):
+		if stop_searching==1: exit()
 		if i%100==0: print ".",
 		fdlist=[ [x,nodedij[i][x]] for x in range(num_districts)]
 		fdlist[i][1]=-1.0
@@ -925,6 +822,7 @@ def Renato_update(Facility2List,gainList,lossList,extraList):
 	global time_Renato_update    
 	t=time.time()
 	for i in range(num_units):
+		if stop_searching==1: break
 		k1=node_groups[i]
 		for k2 in NearFacilityList[i]:
 			if centersID[k2]<0: continue
@@ -932,12 +830,14 @@ def Renato_update(Facility2List,gainList,lossList,extraList):
 			Facility2List[i]=k2
 			break
 	for k in range(num_districts):
+		if stop_searching==1: break
 		gainList[k]=0.0
 		if centersID[k]>=0:continue
 		for i in range(num_units):
 			k1=node_groups[i]
 			gainList[k] += max(0, nodedik[i][k1]-nodedik[i][k])
 	for k in range(num_districts):
+		if stop_searching==1: break
 		lossList[k]=0.0
 		if centersID[k]<0:continue
 		ulist=[x for x in range(num_units) if node_groups[x]==k]
@@ -945,6 +845,7 @@ def Renato_update(Facility2List,gainList,lossList,extraList):
 			k2=Facility2List[i]
 			lossList[k]+=nodedik[i][k2]-nodedik[i][k]
 	for ki in range(num_districts):
+		if stop_searching==1: break
 		for kr in range(num_districts):
 			extraList[ki][kr]=0.0
 			if centersID[ki]>=0:continue
@@ -1055,62 +956,45 @@ def update_centers():
 	global node_groups
 	global centersID
 	global time_update_centers
-	if location_problem==1 or location_problem==0: return
 	t=time.time()
-	obj=biobjective
 	sol=[-1 for x in range(num_units)]
 	centers=[]
 	for k in range(num_districts):
 		if centersID[k]<0: continue
 		kn,ulist=update_center(k)
-		if kn==-1:
+		'''if kn==-1:
 			print "update center error:",[k,sum(1 for x in range(num_units) if node_groups[x]==k)]," ->", [kn,len(ulist)]
-			print NearFacilityList[k][:10],ulist
+			print [x for x in range(num_units) if node_groups[x]==k],ulist
 			kn=k
 		if location_problem==3 and centersID[kn]>=0 and k!=kn:
 			print "update center error: new center is already used:",k,kn
 			kn=k
 		if len(ulist)==0:
 			print "update center error: ulist is empty:",k,kn,ulist
-			kn=k
-		for x in ulist: sol[x]=kn
-		centers.append(kn)
-		centersID[k]=-1
+			kn=k'''
+		if k>=0:
+			for x in ulist: sol[x]=kn
+			centers.append(kn)
+			centersID[k]=-1
 	node_groups=sol[:]
 	for k in centers:
 		centersID[k]=facilityCandidate[k]
-	if location_problem==3 and spatial_contiguity==0:
-		for i in range(num_units):
-			for k in NearFacilityList[i]:
-				if centersID[k]>=0:
-					node_groups[i]=k
-					break
-	obj=biobjective
 	update_district_info()
-	#print "updatecenters",biobjective-obj
 	time_update_centers+=time.time()-t
 
 def update_center(k):
-	if location_problem==3: #pmp
-		return update_center_pmp(k)
 	ulist=[x for x in range(num_units) if node_groups[x]==k]
-	if ulist==[]: return k,[]
-	best_cost=sum(nodedik[x][k] for x in ulist)
-	best_center=k
-	if pmp_I_eaquls_J==1:
-		for i in ulist:
-			cost=sum(nodedik[x][i] for x in ulist)
-			if cost<best_cost:
-				best_cost=cost
-				best_center=i
-	if pmp_I_eaquls_J==0:
-		for i in range(num_districts):
-			cost=sum(nodedik[x][i] for x in ulist)
-			if cost<best_cost:
-				best_cost=cost
-				best_center=i
+	if ulist==[]: return -1,[]
+	best_cost=MAXNUMBER
+	best_center=-1
+	for i in ulist:
+		cost=sum(nodedik[x][i] for x in ulist)
+		if cost<best_cost:
+			best_cost=cost
+			best_center=i
 	return best_center,ulist
-def update_center_pmp(k): #need debug for PMP with few cands
+
+def update_center_back(k):
 	ulist=[x for x in range(num_units) if node_groups[x]==k]
 	if ulist==[]: return k,[]
 	best_cost=MAXNUMBER
@@ -1132,33 +1016,31 @@ def update_center_pmp(k): #need debug for PMP with few cands
 			best_center=i
 	return best_center,ulist
 
-
 def location_check(key):
 	if -1 in node_groups:
-		arcpy_print("debug: "+str(key)+ " unit(s) not assigned! ")
+		arcpy_print("warning: "+str(key)+ " unit(s) not assigned! ")
 		#return -1
 	rlist=list(set(node_groups))
 	if -1 in rlist: 
-		arcpy_print("debug: "+str(key)+ " demand not assigned"+str(rlist))
+		arcpy_print("warning: "+str(key)+ " demand not assigned"+str(rlist))
 		#arcpy_print(str(node_groups))
 		rlist.remove(-1)
 	if len(rlist)>max_num_facility and adaptive_number_of_facilities==0:
-		arcpy_print("debug: "+str(key)+ " too many facilities"+str(rlist))
+		arcpy_print("warning: "+str(key)+ " too many facilities"+str(rlist))
 		#return -1
 	for k in range(num_districts):
 		if k in rlist and centersID[k]==-1:
-			arcpy_print("debug: "+str(key)+ " facilitiy not selected but used")
+			arcpy_print("warning: "+str(key)+ " facilitiy not selected but used")
 			#return -1
 		if centersID[k]>=0 and k not in rlist:
-			arcpy_print("debug: "+str(key)+ " facilitiy selected but not used")
-			print k, district_info[k]
-			print [x for x in centersID if x>=0]
-
+			arcpy_print("warning: "+str(key)+ " facilitiy selected but not used")
+			#print k, district_info[k]
+			#print [x for x in centersID if x>=0]
 			#return -1
 		uid=centersID[k]
 		if spatial_contiguity==1 and uid>-1 and node_groups[uid]!=k:
-			arcpy_print("debug: "+str(key)+ " facilitiy unit assigned to other facility"+str(k))
-			print k,uid, node_groups[uid]
+			arcpy_print("warning: "+str(key)+ " facilitiy unit assigned to other facility"+str(k))
+			#print k,uid, node_groups[uid]
 	'''clist=[]
 	for k in range(num_districts):
 		if centersID[k]<0: continue
@@ -1461,35 +1343,21 @@ def pmp_sampling_solution(psize,sample_size):
 	print "psize,sample_size",psize,sample_size
 	idx=0
 	while 1: #for idx in range(psize):
-		best_biobjective = MAXNUMBER
-		random.seed(seed+idx*100)
-		ulist=[]
-		if sample_size==num_units: ulist=range(num_units)
-		else:
-			while len(ulist)<sample_size: 
-				u=random.randint(0,num_units-1)
-				if u not in ulist: ulist.append(u)
+		ulist=range(num_units)
+		if sample_size<num_units: 
+			random.shuffle(ulist)
+			ulist=ulist[:sample_size]
 		# find k_medoids
 		random.shuffle(ulist)
 		obj,centers=k_medoids_sampling(ulist,[])
-		loop=0
-		for x in centers: 
-			if node_groups[x]!=x:
-				node_groups[x]=x
-		# #improve by TB method
-		# while loop<max_num_facility:
-			# loop+=1
-			# random.shuffle(centers)
-			# random.shuffle(ulist)
-			# sta,obj,centers=r_r_reselect_location_homoDP(centers,ulist,ulist)
-			# #print "multi_start",multi_start,loop,obj,time.time()-ga_time
-			# if sta<=0: break
-		#initial solution
-		#print centers
+		if len(centers)!=max_num_facility:
+			continue  
 		centersID=[-1 for x in range(num_units)]
 		for x in centers: centersID[x]=x
-		obj=0.0
 		for i in range(num_units):
+			if i in centers:
+				node_groups[i]=i                
+				continue
 			bestd=MAXNUMBER
 			bestk=-1
 			for k in centers:
@@ -1497,35 +1365,28 @@ def pmp_sampling_solution(psize,sample_size):
 					bestd=nodedik[i][k]
 					bestk=k
 			node_groups[i]=bestk
-			obj+=bestd
 		update_district_info()
-		location_check(0)
-		if spatial_contiguity>=1:
-			repair_fragmented_solution_large_instance()
-		update_district_info()
-		update_centers()
-		klist=[x for x in range(num_districts) if centersID[x]>=0]
-		if len(klist)<max_num_facility: continue
-		sta=1
-		for k in klist:
+		correct=1
+		for k in centers:
 			if k not in node_groups:
-				sta=0
+				correct=0
+				print "empty cluster!!!"
 				break
-		'''total_area=sum(x[3] for x in nodes)
-		for k in range(num_districts):
-			if centersID[k]<0: continue
-			ulist=[x for x in range(num_units) if node_groups[x]==k]
-			area=sum(nodes[x][3] for x in ulist)
-			if area<total_area*spatial_contiguity_minimum_percentage/max_num_facility/10000:
-				sta=0
-				break				 '''
-		if sta==0: continue		   
+		if correct==0:
+			continue
+		if spatial_contiguity>=1:
+			#repair_fragmented_solution_large_instance()
+			repair_fragmented_solution()
+		location_check(-1)
+		update_district_info()
 		location_check(0)
+		update_centers()
+		location_check(-2)
 		update_best_solution()        
 		all_solutions.append([objective,centersID[:],node_groups[:]])
 		#update_best_solution()
 		idx+=1
-		print "init. solution",idx,biobjective,objective,objective_overload,time.time()-t
+		print "init. solution",idx,biobjective,objective,objective_overload,time.time()-t,check_current_solution_continuality_feasibility()
 		#print [x for x in centersID if x>=0]
 		if len(all_solutions)>=psize: break
 	#return all_solutions
@@ -1581,10 +1442,17 @@ def ils_large_homoDP_fast(numf):
 	if is_spp_modeling>=1:
 		pool_index=[[] for x in range(num_districts)]
 	t_ga=time.time()
+	SST_all=0.0
+	for idx in range(len(weight_features)):
+		if weight_features[idx]<0.0000001: continue
+		mean=sum(nodes[x][3]*nodes_std[x][idx] for x in range(num_units) ) / total_pop
+		#sst=sum(pow(x[idx]-mean,2) for x in nodes_std)
+		sst=sum(nodes[x][3]*pow(nodes_std[x][idx]-mean,2) for x in range(num_units))
+		SST_all+=sst
 
 	print "\nstep 1: generating initial solutions ..."
 	#sampling and solving sub-problems
-	sample_size=max(100*max_num_facility, num_units/10)
+	sample_size=max(50*max_num_facility, num_units/10)
 	if sample_size>num_units: sample_size=num_units
 	num_samplling=multi_start_count
 	if num_samplling<=0:
@@ -1608,17 +1476,19 @@ def ils_large_homoDP_fast(numf):
 	while 1:
 		loop+=1
 		r=random.random()
-		sidx = int(min(multi_start_count,len(all_solutions))* pow(r,1.2)*0.999)
+		sidx = int(min(multi_start_count,len(all_solutions))* pow(r,1.5)*0.999)
 		node_groups=all_solutions[sidx][2][:]
 		centersID=all_solutions[sidx][1][:]
 		update_district_info()
 		not_improved+=1
+		nf=sum(1 for x in centersID if x>=0)
 		best_obj_begin=best_biobjective_global
-		obj_begin=biobjective
+		obj_begin=str(nf)+" "+str(int(biobjective))
 		location_check(1)
 		#assign_ruin_recreate(-1)
 		maxStrength=min(6, max_num_facility*2/3)
-		strength=random.randint(3,maxStrength)
+		maxStrength=max(maxStrength,3)   
+		strength=random.randint(min(3,max_num_facility),maxStrength)
 		clist=[x for x in range(num_districts) if centersID[x]<0]
 		random.shuffle(clist)
 		for x in range(strength):
@@ -1639,6 +1509,7 @@ def ils_large_homoDP_fast(numf):
 		location_check(2)
 		Renato_update(Facility2List,gainList,lossList,extraList)
 		while 1:
+			if stop_searching==1: break
 			sta=pmp_Renato(Facility2List,gainList,lossList,extraList)#bug
 			#sta=pmp_Whitaker()
 			update_district_info()
@@ -1696,7 +1567,8 @@ def ils_large_homoDP_fast(numf):
 		klist=list(set(node_groups))
 		n=len(klist)
 		r2=1-best_biobjective_global/total_pop/sum(weight_features)
-		print "Search loop",loop,"best",int(best_biobjective_global), int(r2*10000)/10000.0, "current",int(obj_begin),"->",n,int(biobjective),"stat", len(all_solutions),not_improved,int(time.time()-ga_time)
+		r2=1-best_biobjective_global/SST_all
+		print "Search loop",loop,"best",int(best_biobjective_global), int(r2*10000)/10000.0, "current",obj_begin,"->",n,int(biobjective),"stat", len(all_solutions),not_improved,int(time.time()-ga_time)
 		if not_improved>=max_loops_solution_not_improved: break
 		if stop_searching==1: break
 		#if time.time()-t_ga > heuristic_time_limit:  break
@@ -1706,15 +1578,6 @@ def ils_large_homoDP_fast(numf):
 	ga_time=time.time()-t_ga
 	search_stat()
 	homoDP_stat()
-	print "solution connectivity ..."
-	for k in range(num_districts):
-		if centersID[k]<0:continue
-		ulist=[x for x in range(num_units) if node_groups[x]==k]
-		#fu=frag_unit_minority(ulist)
-		sta=check_continuality_feasibility(node_groups,k)
-		print "cluster",nodes[k][0],len(ulist),"connectivity:",sta,
-		ulist=[x for x in range(num_units) if node_groups[x]==k]
-		print district_with_multiparts(ulist)
 	return [best_biobjective_global,best_objective_global,best_overload_global,centersID,best_solution_global]
 
 def homoDP_stat():
@@ -1738,10 +1601,11 @@ def homoDP_stat():
 		print "sse, sst, r2",sse, sst, r2
 		return
 	attrs=len(nodes_std[0])
-	print "-----------------Stats for each attribute--------------------"
+	print "------------------------------Stats for each attribute----------------------------"
 	print "Num of attrs", attrs
 	print "weights",weight_features,len(weight_features)
-	print "Attr----Avg--------Dev---------SSE-------SST------R2-------F-test---------"
+	print "------------------Attribute statistics--------------------"
+	print "Attr\tweight\tAvg\tDev\tSSE\tSST\tR2\tF-test"
 	effective_attr=0
 	area_total=sum(x[3] for x in nodes)
 	for idx in range(attrs):
@@ -1750,7 +1614,7 @@ def homoDP_stat():
 		mean=sum(x[3]*x[idx+4] for x in nodes) / area_total
 		sst=sum(x[3]*pow(x[idx+4]-mean,2) for x in nodes)
 		if sst<0.0000001:
-			print "Fld"+str(idx), sst
+			print attributes[idx], sst
 			continue
 		dev=pow(sst/area_total,0.5)
 		sse=0.0
@@ -1758,6 +1622,7 @@ def homoDP_stat():
 		for k in range(num_districts):
 			if centersID[k]<0:continue
 			ulist=[x for x in range(num_units) if node_groups[x]==k]
+			if len(ulist)<1: continue
 			sumd=sum(nodes[x][3]*nodes[x][idx+4] for x in ulist)
 			means[k]=sumd/sum(nodes[x][3] for x in ulist)
 		for i in range(num_units):
@@ -1769,7 +1634,8 @@ def homoDP_stat():
 			f=10000
 		else:
 			f=r2/(max_num_facility-1) * (num_units-max_num_facility) / (1-r2)
-		print attributes[idx], mean, dev, sse,sst, r2, f
+		s=attributes[idx]+"\t"+str(weight_features[idx])+"\t"+str(mean)+"\t"+ str(dev)+"\t"+ str(sse)+"\t"+str(sst)+"\t"+ str(r2)+"\t"+str(f)
+		print s #attributes[idx], weight_features[idx],mean, dev, sse,sst, r2, f
 	SST_all=0.0
 	SSE_all=0.0
 	for idx in range(attrs):
@@ -1786,6 +1652,7 @@ def homoDP_stat():
 		for k in range(num_districts):
 			if centersID[k]<0:continue
 			ulist=[x for x in range(num_units) if node_groups[x]==k]
+			if len(ulist)<1: continue
 			sumd=sum(nodes[x][3]*nodes_std[x][idx] for x in ulist)
 			means[k]=sumd/sum(nodes[x][3] for x in ulist)
 		for i in range(num_units):
@@ -1798,7 +1665,7 @@ def homoDP_stat():
 	f=r2/(max_num_facility-1) * (num_units-max_num_facility) / (1-r2)
 	print "Stat:",	"SSE=",SSE_all,"SST=",SST_all, "R2=",r2,"F-stat=", f
 	objective_R2=r2
-	print "-----------------------mean values of regions-------------------------"
+	print "-----------------------------mean values of regions-----------------------------------"
 	s="Region"
 	klist=[x for x in centersID if x>=0]
 	for k in klist:
@@ -1809,13 +1676,26 @@ def homoDP_stat():
 		s=""
 		if weight_features[idx]<0.0000001: continue
 		s+=attributes[idx]
-		for k in range(max_num_facility):
-			ulist=[x for x in range(num_units) if node_groups[x]==klist[k]]
+		for k in klist:
+			ulist=[x for x in range(num_units) if node_groups[x]==k]
+			if len(ulist)<1: 
+				s+="\t------"
+				continue		
 			mean=sum(nodes[x][idx+4] for x in ulist) / len(ulist)
 			s+="\t"+str(mean)
 		print s
-	print "-----------------------end of Stat-------------------------"
-	return r2
+	#print "-----------------------end of Stat-------------------------"
+	print "------------------------------Regional statistics------------------------------------"
+	idx=0
+	for k in range(num_districts):
+		if centersID[k]<0:continue
+		idx+=1
+		ulist=[x for x in range(num_units) if node_groups[x]==k]
+		sta=check_continuality_feasibility(node_groups,k)
+		print "Region:",idx, "\tCenterID:",nodes[k][0],"\tUnits:",len(ulist),"\tArea:", sum(nodes[x][3] for x in ulist),"\tConnectivity:",sta,
+		ulist=[x for x in range(num_units) if node_groups[x]==k]
+		print district_with_multiparts(ulist)
+	return
 
 def search_stat():
 	arcpy_print("----------------search statistics----------------------")
